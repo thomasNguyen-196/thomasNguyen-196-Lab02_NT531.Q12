@@ -77,6 +77,7 @@ def get_openstack_token():
         if _is_token_valid(cache.get("expires_at", "")):
             token = cache["token"]
             os.environ["OPENSTACK_TOKEN"] = token
+            print("[auth] reusing cached token.")
             return token
         else:
             print("[auth] Cached token expired, requesting new one...")

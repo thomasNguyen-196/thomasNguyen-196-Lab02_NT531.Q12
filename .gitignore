@@ -121,5 +121,6 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-# token cache
+# cache files
 token_cache.json
+openstack_data.json
