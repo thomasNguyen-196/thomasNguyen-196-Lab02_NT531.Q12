@@ -49,11 +49,15 @@ class App(customtkinter.CTk):
         self.log_frame.grid(row=0, column=1, sticky="nsew", padx=(5, 10), pady=10)
         self.log_frame.grid_rowconfigure(1, weight=1)
         self.log_frame.grid_columnconfigure(0, weight=1)
+        self.log_frame.grid_columnconfigure(1, weight=0)
+        self._refresh_in_progress = False
 
         log_label = customtkinter.CTkLabel(self.log_frame, text="Logs", font=customtkinter.CTkFont(size=15, weight="bold"))
         log_label.grid(row=0, column=0, padx=10, pady=(10, 5), sticky="w")
+        self.refresh_button = customtkinter.CTkButton(self.log_frame, text="Refresh", command=self.on_refresh_click, width=100)
+        self.refresh_button.grid(row=0, column=1, padx=10, pady=(10, 5), sticky="e")
         self.log_textbox = customtkinter.CTkTextbox(self.log_frame)
-        self.log_textbox.grid(row=1, column=0, padx=10, pady=(5, 10), sticky="nsew")
+        self.log_textbox.grid(row=1, column=0, columnspan=2, padx=10, pady=(5, 10), sticky="nsew")
         self.log_textbox.configure(state="disabled")
 
         sys.stdout = TextboxStream(self)
@@ -70,6 +74,31 @@ class App(customtkinter.CTk):
         state = "normal" if enabled else "disabled"
         self.create_network_button.configure(state=state)
         self.create_instance_button.configure(state=state)
+        if state == "disabled":
+            self.refresh_button.configure(state="disabled")
+        elif not self._refresh_in_progress:
+            self.refresh_button.configure(state="normal")
+
+    def on_refresh_click(self):
+        if self._refresh_in_progress:
+            return
+        print("--- Refresh button clicked ---")
+        self._refresh_in_progress = True
+        self.refresh_button.configure(state="disabled")
+
+        def _refresh_logic():
+            self._force_poll_and_update_ui(on_finish_callback=self._on_refresh_complete)
+
+        threading.Thread(target=_refresh_logic, daemon=True).start()
+
+    def _on_refresh_complete(self):
+        print("Refresh complete.")
+        self._refresh_in_progress = False
+        if (
+            self.create_network_button.cget("state") == "normal"
+            and self.create_instance_button.cget("state") == "normal"
+        ):
+            self.refresh_button.configure(state="normal")
 
     def on_create_network_click(self):
         print("--- Create Network button clicked ---")
@@ -80,6 +109,7 @@ class App(customtkinter.CTk):
                 network_name = self.network_name_entry.get()
                 if not network_name:
                     print("Error: Network name cannot be empty.")
+                    self._toggle_buttons(enabled=True)
                     return
                 
                 if is_network_duplicate(network_name):

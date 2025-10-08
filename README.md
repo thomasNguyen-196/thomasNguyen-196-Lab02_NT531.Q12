@@ -59,9 +59,7 @@ When the GUI opens, logs appear on the right-hand side. The app loads cached
 OpenStack data (if available) or automatically polls the API on first launch.
 
 ## Usage
-- **Refresh inventory**: Use any resource-creation button; the app polls fresh
-  data after each successful action. You can force a refresh by deleting
-  `openstack_data.json` or running `python -m app.services.poll_resources`.
+- **Refresh inventory**: Click the `Refresh` button in the GUI or use any resource-creation button; the app polls fresh data after each successful action. You can force a refresh from the terminal with `python -m app.services.poll_resources`.
 - **Create a network**: Enter a name, corresponding subnet name, and CIDR, then click
   `Create`. Duplicate network names are prevented using cached data.
 - **Create an instance**: Pick an image, flavor, security group, and network,
