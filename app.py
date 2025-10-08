@@ -5,6 +5,9 @@ import threading
 from poll_resources import poll_openstack_resources
 from create_net_subnet import create_network, create_subnet
 from auth import get_openstack_token
+from create_instance import create_instance
+from validate import is_instance_duplicate, is_network_duplicate
+
 
 class TextboxStream:
     """A stream-like object that writes to a CTkTextbox."""
@@ -77,6 +80,11 @@ class App(customtkinter.CTk):
                 if not network_name:
                     print("Error: Network name cannot be empty.")
                     return
+                
+                if is_network_duplicate(network_name):
+                    print(f"Error: Network '{network_name}' already exists.")
+                    self._toggle_buttons(enabled=True)
+                    return
 
                 token = get_openstack_token()
                 network_id = create_network(token, network_name)
@@ -106,6 +114,15 @@ class App(customtkinter.CTk):
 
             self._force_poll_and_update_ui()
 
+            # Set the network combobox in the instance frame to the newly created network (for user convenience)
+            network_names = [net.get('name', 'Unnamed') for net in self.data.get("networks", {}).get("networks", [])]
+            if network_name in network_names:
+                self.network_combo.set(network_name)
+                print(f"Set network combobox to newly created network: {network_name}")
+            else:
+                # If not found in cached data, set directly
+                self.network_combo.set(network_name)
+
             self._toggle_buttons(enabled=True)
 
         # Chạy tất cả trên luồng riêng
@@ -116,10 +133,73 @@ class App(customtkinter.CTk):
         print("--- Create Instance button clicked ---")
         self._toggle_buttons(enabled=False)
         def _actual_action():
-            print("--> TODO: Instance creation logic runs here.")
+            try:
+                instance_name = self.instance_name_entry.get()
+                if not instance_name:
+                    print("Error: Instance name cannot be empty.")
+                    return
+                
+                if is_instance_duplicate(instance_name):
+                    print(f"Error: Instance '{instance_name}' already exists.")
+                    self._toggle_buttons(enabled=True)
+                    return
+
+                selected_image_name = self.image_combo.get()
+                selected_flavor_string = self.flavor_combo.get()
+                selected_sg_name = self.sg_combo.get()
+                selected_network_name = self.network_combo.get()
+
+                if not all([selected_image_name, selected_flavor_string, selected_sg_name, selected_network_name]):
+                    print("Error: Please ensure all fields are selected/filled.")
+                    return
+
+                selected_flavor_name = selected_flavor_string.split(" (")[0]
+
+                image_id = None
+                for img in self.data.get("images", {}).get("images", []):
+                    if img.get("name") == selected_image_name:
+                        image_id = img.get("id")
+                        break
+
+                flavor_id = None
+                for f in self.data.get("flavors", {}).get("flavors", []):
+                    if f.get("name") == selected_flavor_name:
+                        flavor_id = f.get("id")
+                        break
+
+                network_id = None
+                for net in self.data.get("networks", {}).get("networks", []):
+                    if net.get("name") == selected_network_name:
+                        network_id = net.get("id")
+                        break
+
+                if not all([image_id, flavor_id, network_id]):
+                    print("Error: Could not find IDs for the selected resources.")
+                    return
+
+                user_script = self.script_textbox.get("1.0", "end").strip()
+                if user_script:
+                    user_data_b64 = customtkinter.base64.b64encode(user_script.encode('utf-8')).decode('utf-8')
+                else:
+                    user_data_b64 = None
+
+                token = get_openstack_token()
+                
+                instance_id = create_instance(token, instance_name, image_id, flavor_id, network_id, user_data=user_data_b64)
+
+                if instance_id:
+                    print(f"Instance creation successful. ID: {instance_id}")
+                    # Clear fields
+                    self.instance_name_entry.delete(0, "end")
+                    self.script_textbox.delete("1.0", "end")
+                else:
+                    print("Instance creation failed.")
+            except Exception as e:
+                print(f"An unexpected error occurred: {e}")
+            
             self._toggle_buttons(enabled=True)
 
-        threading.Thread(target=self._force_poll_and_update_ui, args=(_actual_action,), daemon=True).start()
+        threading.Thread(target=_actual_action, daemon=True).start()
 
     def _build_network_frame(self):
         self.network_frame = customtkinter.CTkFrame(self.controls_frame)

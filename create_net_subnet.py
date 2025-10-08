@@ -1,7 +1,5 @@
 import requests
 import json
-from auth import get_openstack_token
-
 
 def create_network(token, network_name):
     """
