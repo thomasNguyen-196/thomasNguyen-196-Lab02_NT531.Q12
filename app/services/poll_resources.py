@@ -1,5 +1,4 @@
-from auth import get_openstack_token
-import os
+from .auth import get_openstack_token
 import requests
 import json
 

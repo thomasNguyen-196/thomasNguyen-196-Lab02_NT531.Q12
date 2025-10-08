@@ -53,7 +53,7 @@ Paste the output into the corresponding `.env` entry.
 
 ## Running the App
 ```bash
-python app.py
+python -m app.main
 ```
 When the GUI opens, logs appear on the right-hand side. The app loads cached
 OpenStack data (if available) or automatically polls the API on first launch.
@@ -61,36 +61,36 @@ OpenStack data (if available) or automatically polls the API on first launch.
 ## Usage
 - **Refresh inventory**: Use any resource-creation button; the app polls fresh
   data after each successful action. You can force a refresh by deleting
-  `openstack_data.json` or running `python poll_resources.py`.
+  `openstack_data.json` or running `python -m app.services.poll_resources`.
 - **Create a network**: Enter a name, corresponding subnet name, and CIDR, then click
   `Create`. Duplicate network names are prevented using cached data.
 - **Create an instance**: Pick an image, flavor, security group, and network,
   provide an instance name, and optionally paste a cloud-init script. The app
   Base64-encodes the script automatically before sending it to Nova.
-- **Check for duplicates**: Background helpers in `validate.py` prevent
+- **Check for duplicates**: Background helpers in `app/utils/validate.py` prevent
   accidental reuse of network or server names.
 
 ## Command-Line Utilities
-- `python poll_resources.py`: Polls all configured OpenStack endpoints and
+- `python -m app.services.poll_resources`: Polls all configured OpenStack endpoints and
   updates `openstack_data.json`.
-- `python create_net_subnet.py`: Exposes the network/subnet creation helpers for
+- `python -m app.services.create_net_subnet`: Exposes the network/subnet creation helpers for
   scripting or testing.
-- `python create_instance.py`: Provides the instance creation routine for use in
+- `python -m app.services.create_instance`: Provides the instance creation routine for use in
   automated flows.
 
 ## Data & Token Caching
 - `token_cache.json`: Stores the most recent Keystone token and expiry. Delete
   this file to force re-authentication.
 - `openstack_data.json`: Holds the latest snapshot of flavors, images, networks,
-  and other resources. Regenerated via the GUI or `poll_resources.py`.
+  and other resources. Regenerated via the GUI or `python -m app.services.poll_resources`.
 
 ## Project Structure
-- `app.py`: Main GUI application.
-- `auth.py`: Keystone authentication and token caching logic.
-- `poll_resources.py`: Resource polling utility used by the GUI and CLI.
-- `create_net_subnet.py`: REST helpers for creating networks and subnets.
-- `create_instance.py`: REST helper for provisioning new Nova instances.
-- `validate.py`: Safeguards to detect duplicate resource names using cached
+- `app/main.py`: Main GUI application entry point.
+- `app/services/auth.py`: Keystone authentication and token caching logic.
+- `app/services/poll_resources.py`: Resource polling utility used by the GUI and CLI.
+- `app/services/create_net_subnet.py`: REST helpers for creating networks and subnets.
+- `app/services/create_instance.py`: REST helper for provisioning new Nova instances.
+- `app/utils/validate.py`: Safeguards to detect duplicate resource names using cached
   data.
 
 ## Troubleshooting

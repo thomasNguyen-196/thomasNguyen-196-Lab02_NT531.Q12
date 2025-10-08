@@ -1,12 +1,13 @@
+import base64
 import customtkinter
 import json
 import sys
 import threading
-from poll_resources import poll_openstack_resources
-from create_net_subnet import create_network, create_subnet
-from auth import get_openstack_token
-from create_instance import create_instance
-from validate import is_instance_duplicate, is_network_duplicate
+from .services.poll_resources import poll_openstack_resources
+from .services.create_net_subnet import create_network, create_subnet
+from .services.auth import get_openstack_token
+from .services.create_instance import create_instance
+from .utils.validate import is_instance_duplicate, is_network_duplicate
 
 
 class TextboxStream:
@@ -179,7 +180,7 @@ class App(customtkinter.CTk):
 
                 user_script = self.script_textbox.get("1.0", "end").strip()
                 if user_script:
-                    user_data_b64 = customtkinter.base64.b64encode(user_script.encode('utf-8')).decode('utf-8')
+                    user_data_b64 = base64.b64encode(user_script.encode('utf-8')).decode('utf-8')
                 else:
                     user_data_b64 = None
 
