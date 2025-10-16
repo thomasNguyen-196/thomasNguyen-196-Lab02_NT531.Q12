@@ -3,11 +3,23 @@ import customtkinter
 import json
 import sys
 import threading
+import time
 from .services.poll_resources import poll_openstack_resources
 from .services.create_net_subnet import create_network, create_subnet
 from .services.auth import get_openstack_token
 from .services.create_instance import create_instance
-from .utils.validate import is_instance_duplicate, is_network_duplicate
+from .services.router_fip import (
+    create_router,
+    add_subnet_interface,
+    associate_floating_ip,
+    get_ports_for_device,
+)
+from .utils.validate import (
+    is_instance_duplicate,
+    is_network_duplicate,
+    get_available_floating_ips,
+    get_port_id_by_device,
+)
 
 
 class TextboxStream:
@@ -33,8 +45,12 @@ class App(customtkinter.CTk):
         super().__init__()
 
         self.data = {}
+        self._floating_ip_map = {}
+        self.no_floating_ip_option = "No floating IP (skip)"
+        self.poll_log_path = "poll_refresh.log"
         self.title("Main Application")
-        self.geometry("1024x768")
+        self.geometry("1280x880")
+        self.minsize(1280, 880)
 
         self.grid_columnconfigure(0, weight=2)
         self.grid_columnconfigure(1, weight=1)
@@ -129,14 +145,30 @@ class App(customtkinter.CTk):
                         subnet_id = create_subnet(token, subnet_name, network_id, cidr)
                         if subnet_id:
                             print(f"Subnet creation successful. ID: {subnet_id}")
+
+                            if self.auto_router_var.get():
+                                router_name = self.router_name_entry.get().strip() or f"{network_name}_router"
+                                router_id = create_router(token, router_name)
+                                if router_id:
+                                    attach_result = add_subnet_interface(token, router_id, subnet_id)
+                                    if attach_result:
+                                        print(f"Router '{router_name}' created and subnet attached. ID: {router_id}")
+                                    else:
+                                        print(f"Warning: Router '{router_name}' created but failed to attach subnet.")
+                                else:
+                                    print(f"Warning: Failed to create router '{router_name}'.")
+
                             # clear fields
                             self.network_name_entry.delete(0, "end")
                             self.subnet_name_entry.delete(0, "end")
                             self.network_address_entry.delete(0, "end")
+                            self.router_name_entry.delete(0, "end")
                         else:
                             print("Subnet creation failed.")
                     else:
                         print("Warning: Missing subnet info; only network created.")
+                        if self.auto_router_var.get():
+                            print("Info: Skipping router creation because subnet information is incomplete.")
                 else:
                     print("Network creation failed.")
 
@@ -179,6 +211,8 @@ class App(customtkinter.CTk):
                 selected_flavor_string = self.flavor_combo.get()
                 selected_sg_name = self.sg_combo.get()
                 selected_network_name = self.network_combo.get()
+                selected_floating_value = self.floating_ip_combo.get()
+                floating_ip_id = self._floating_ip_map.get(selected_floating_value)
 
                 if not all([selected_image_name, selected_flavor_string, selected_sg_name, selected_network_name]):
                     print("Error: Please ensure all fields are selected/filled.")
@@ -220,6 +254,40 @@ class App(customtkinter.CTk):
 
                 if instance_id:
                     print(f"Instance creation successful. ID: {instance_id}")
+
+                    if floating_ip_id:
+                        print(f"Attempting to associate floating IP ID {floating_ip_id} with instance {instance_id}...")
+                        print("Waiting 5 seconds for instance networking to initialize...")
+                        time.sleep(5)
+                        print("Refreshing cached inventory prior to floating IP association...")
+                        self._force_poll_and_update_ui()
+                        port_id = None
+                        ports = get_ports_for_device(token, instance_id)
+                        for port in ports:
+                            candidate_port_id = port.get("id")
+                            if candidate_port_id:
+                                port_id = candidate_port_id
+                                break
+
+                        if not port_id:
+                            print("Info: No ports returned from live query, falling back to refreshed cache.")
+                            port_id = get_port_id_by_device(instance_id)
+
+                        if port_id:
+                            association = associate_floating_ip(token, floating_ip_id, port_id)
+                            if association:
+                                floating_ip_address = (
+                                    association.get("floatingip", {}).get("floating_ip_address") or selected_floating_value
+                                )
+                                print(f"Floating IP {floating_ip_address} associated successfully.")
+                            else:
+                                print(f"Warning: Failed to associate floating IP {floating_ip_id} with port {port_id}.")
+                        else:
+                            print(f"Warning: Could not determine port for instance {instance_id}; skipping floating IP assignment.")
+                    else:
+                        if selected_floating_value != self.no_floating_ip_option:
+                            print(f"Warning: Selected floating IP '{selected_floating_value}' not available in map; skipping assignment.")
+
                     # Clear fields
                     self.instance_name_entry.delete(0, "end")
                     self.script_textbox.delete("1.0", "end")
@@ -227,7 +295,8 @@ class App(customtkinter.CTk):
                     print("Instance creation failed.")
             except Exception as e:
                 print(f"An unexpected error occurred: {e}")
-            
+
+            self._force_poll_and_update_ui()
             self._toggle_buttons(enabled=True)
 
         threading.Thread(target=_actual_action, daemon=True).start()
@@ -247,8 +316,20 @@ class App(customtkinter.CTk):
         customtkinter.CTkLabel(self.network_frame, text="Network Address").grid(row=3, column=0, padx=10, pady=5, sticky="w")
         self.network_address_entry = customtkinter.CTkEntry(self.network_frame, placeholder_text="192.168.11.0/24")
         self.network_address_entry.grid(row=3, column=1, padx=10, pady=5, sticky="ew")
+        customtkinter.CTkLabel(self.network_frame, text="Router Name").grid(row=4, column=0, padx=10, pady=5, sticky="w")
+        self.router_name_entry = customtkinter.CTkEntry(self.network_frame, placeholder_text="tung196_router")
+        self.router_name_entry.grid(row=4, column=1, padx=10, pady=5, sticky="ew")
+        self.auto_router_var = customtkinter.BooleanVar(value=True)
+        self.auto_router_checkbox = customtkinter.CTkCheckBox(
+            self.network_frame,
+            text="Create router & attach subnet",
+            variable=self.auto_router_var,
+            onvalue=True,
+            offvalue=False,
+        )
+        self.auto_router_checkbox.grid(row=5, column=0, columnspan=2, padx=10, pady=5, sticky="w")
         self.create_network_button = customtkinter.CTkButton(self.network_frame, text="Create", command=self.on_create_network_click)
-        self.create_network_button.grid(row=4, column=1, padx=10, pady=10, sticky="e")
+        self.create_network_button.grid(row=6, column=1, padx=10, pady=10, sticky="e")
 
     def _build_instance_frame(self, loading=False):
         self.instance_frame = customtkinter.CTkFrame(self.controls_frame)
@@ -272,14 +353,17 @@ class App(customtkinter.CTk):
         customtkinter.CTkLabel(self.instance_frame, text="Network").grid(row=5, column=0, padx=10, pady=5, sticky="w")
         self.network_combo = customtkinter.CTkComboBox(self.instance_frame, values=loading_values)
         self.network_combo.grid(row=5, column=1, padx=10, pady=5, sticky="ew")
-        customtkinter.CTkLabel(self.instance_frame, text="Name").grid(row=6, column=0, padx=10, pady=5, sticky="w")
+        customtkinter.CTkLabel(self.instance_frame, text="Floating IP").grid(row=6, column=0, padx=10, pady=5, sticky="w")
+        self.floating_ip_combo = customtkinter.CTkComboBox(self.instance_frame, values=loading_values)
+        self.floating_ip_combo.grid(row=6, column=1, padx=10, pady=5, sticky="ew")
+        customtkinter.CTkLabel(self.instance_frame, text="Name").grid(row=7, column=0, padx=10, pady=5, sticky="w")
         self.instance_name_entry = customtkinter.CTkEntry(self.instance_frame, placeholder_text="tung196_TEST_INSTANCE")
-        self.instance_name_entry.grid(row=6, column=1, padx=10, pady=5, sticky="ew")
-        customtkinter.CTkLabel(self.instance_frame, text="Custom Script").grid(row=7, column=0, padx=10, pady=5, sticky="nw")
+        self.instance_name_entry.grid(row=7, column=1, padx=10, pady=5, sticky="ew")
+        customtkinter.CTkLabel(self.instance_frame, text="Custom Script").grid(row=8, column=0, padx=10, pady=5, sticky="nw")
         self.script_textbox = customtkinter.CTkTextbox(self.instance_frame, height=100)
-        self.script_textbox.grid(row=7, column=1, padx=10, pady=5, sticky="ew")
+        self.script_textbox.grid(row=8, column=1, padx=10, pady=5, sticky="ew")
         self.create_instance_button = customtkinter.CTkButton(self.instance_frame, text="Create", command=self.on_create_instance_click)
-        self.create_instance_button.grid(row=8, column=1, padx=10, pady=10, sticky="e")
+        self.create_instance_button.grid(row=9, column=1, padx=10, pady=10, sticky="e")
 
     def _load_data_and_update_ui(self):
         try:
@@ -288,7 +372,7 @@ class App(customtkinter.CTk):
                 print("Data loaded from cache.")
         except FileNotFoundError:
             print("Cached data not found. Polling from OpenStack API...")
-            poll_openstack_resources()
+            poll_openstack_resources(verbose=False, log_file=self.poll_log_path)
             try:
                 with open("openstack_data.json", "r", encoding='utf-8') as f:
                     self.data = json.load(f)
@@ -300,8 +384,7 @@ class App(customtkinter.CTk):
 
     def _force_poll_and_update_ui(self, on_finish_callback=None):
         """Runs in a background thread to FORCE a poll and then updates the UI."""
-        print("Forcing a poll from OpenStack API...")
-        poll_openstack_resources()
+        poll_openstack_resources(verbose=False, log_file=self.poll_log_path)
         try:
             with open("openstack_data.json", "r", encoding='utf-8') as f:
                 self.data = json.load(f)
@@ -340,6 +423,22 @@ class App(customtkinter.CTk):
         network_names = [net.get('name', 'Unnamed') for net in self.data.get("networks", {}).get("networks", [])]
         self.network_combo.configure(values=network_names if network_names else ["No networks found"])
         self.network_combo.set(network_names[0] if network_names else "No networks found")
+
+        available_fips = get_available_floating_ips()
+        floating_values = [self.no_floating_ip_option]
+        self._floating_ip_map = {}
+        for ip in available_fips:
+            address = ip.get("floating_ip_address", "Unknown IP")
+            ip_id = ip.get("id", "")
+            display = f"{address} ({ip_id[:8]})" if ip_id else address
+            floating_values.append(display)
+            self._floating_ip_map[display] = ip_id
+
+        if len(floating_values) == 1:
+            print("Info: No available floating IPs detected in cache.")
+
+        self.floating_ip_combo.configure(values=floating_values)
+        self.floating_ip_combo.set(floating_values[0])
         
         self._on_flavor_select(self.flavor_combo.get())
         print("UI update complete.")
