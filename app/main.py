@@ -4,6 +4,7 @@ import json
 import sys
 import threading
 import time
+from tkinter import filedialog as tk_filedialog
 from .services.poll_resources import poll_openstack_resources
 from .services.create_net_subnet import create_network, create_subnet
 from .services.auth import get_openstack_token
@@ -29,13 +30,8 @@ class TextboxStream:
         self.app = app
 
     def write(self, text):
-        self.app.after(0, self._write, text)
-
-    def _write(self, text):
-        self.textbox.configure(state="normal")
-        self.textbox.insert("end", text)
-        self.textbox.see("end")
-        self.textbox.configure(state="disabled")
+        # delegate to app for parsing and colorizing
+        self.app.after(0, self.app._append_log, text)
 
     def flush(self):
         pass
@@ -52,8 +48,8 @@ class App(customtkinter.CTk):
         self.geometry("1280x880")
         self.minsize(1280, 880)
 
-        self.grid_columnconfigure(0, weight=2)
-        self.grid_columnconfigure(1, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_columnconfigure(1, weight=2)
         self.grid_rowconfigure(0, weight=1)
 
         self.controls_frame = customtkinter.CTkFrame(self, corner_radius=0)
@@ -66,15 +62,34 @@ class App(customtkinter.CTk):
         self.log_frame.grid_rowconfigure(1, weight=1)
         self.log_frame.grid_columnconfigure(0, weight=1)
         self.log_frame.grid_columnconfigure(1, weight=0)
+        self.log_frame.grid_columnconfigure(2, weight=0)
+        self.log_frame.grid_columnconfigure(3, weight=0)
         self._refresh_in_progress = False
 
         log_label = customtkinter.CTkLabel(self.log_frame, text="Logs", font=customtkinter.CTkFont(size=15, weight="bold"))
         log_label.grid(row=0, column=0, padx=10, pady=(10, 5), sticky="w")
         self.refresh_button = customtkinter.CTkButton(self.log_frame, text="Refresh", command=self.on_refresh_click, width=100)
         self.refresh_button.grid(row=0, column=1, padx=10, pady=(10, 5), sticky="e")
+        self.clear_log_button = customtkinter.CTkButton(self.log_frame, text="Clear", command=self.on_log_clear_click, width=80)
+        self.clear_log_button.grid(row=0, column=2, padx=5, pady=(10, 5), sticky="e")
+        self.save_log_button = customtkinter.CTkButton(self.log_frame, text="Save", command=self.on_log_save_click, width=80)
+        self.save_log_button.grid(row=0, column=3, padx=5, pady=(10, 5), sticky="e")
         self.log_textbox = customtkinter.CTkTextbox(self.log_frame)
-        self.log_textbox.grid(row=1, column=0, columnspan=2, padx=10, pady=(5, 10), sticky="nsew")
+        self.log_textbox.grid(row=1, column=0, columnspan=4, padx=10, pady=(5, 10), sticky="nsew")
         self.log_textbox.configure(state="disabled")
+
+        # configure log tags (colors)
+        # note: CTkTextbox proxies standard tkinter Text tag config API
+        self.log_textbox.tag_config("INFO", foreground="#6b7280")  # gray-500
+        self.log_textbox.tag_config("SUCCESS", foreground="#16a34a")  # green-600
+        self.log_textbox.tag_config("WARNING", foreground="#d97706")  # amber-600
+        self.log_textbox.tag_config("ERROR", foreground="#dc2626")  # red-600
+        self.log_textbox.tag_config("POLL", foreground="#2563eb")  # blue-600
+        self.log_textbox.tag_config("ROUTER", foreground="#7c3aed")  # violet-600
+        self.log_textbox.tag_config("FLOATING", foreground="#0891b2")  # cyan-600
+        self.log_textbox.tag_config("PORTS", foreground="#0ea5e9")  # sky-600
+        self.log_textbox.tag_config("AUTH", foreground="#22c55e")  # green-500
+        self.log_textbox.tag_config("UI", foreground="#a855f7")  # purple-500
 
         sys.stdout = TextboxStream(self)
         sys.stderr = TextboxStream(self)
@@ -94,6 +109,79 @@ class App(customtkinter.CTk):
             self.refresh_button.configure(state="disabled")
         elif not self._refresh_in_progress:
             self.refresh_button.configure(state="normal")
+
+    def on_log_clear_click(self):
+        self.log_textbox.configure(state="normal")
+        self.log_textbox.delete("1.0", "end")
+        self.log_textbox.configure(state="disabled")
+
+    def on_log_save_click(self):
+        # open save dialog; default filename includes timestamp
+        filename = tk_filedialog.asksaveasfilename(
+            defaultextension=".log",
+            filetypes=[("Log files", "*.log"), ("Text files", "*.txt"), ("All files", "*.*")],
+            initialfile="openstack_gui.log"
+        )
+        if not filename:
+            return
+        content = self.log_textbox.get("1.0", "end")
+        try:
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"Info: Log saved to {filename}")
+        except OSError as exc:
+            print(f"Error: Failed to save log file: {exc}")
+
+    def _append_log(self, text):
+        # Parse incoming text into lines and colorize by simple rules
+        if not text:
+            return
+        lines = text.splitlines(keepends=True)
+        self.log_textbox.configure(state="normal")
+        for line in lines:
+            tag = self._infer_log_tag(line)
+            if tag:
+                self.log_textbox.insert("end", line, tag)
+            else:
+                self.log_textbox.insert("end", line)
+        self.log_textbox.see("end")
+        self.log_textbox.configure(state="disabled")
+
+    def _infer_log_tag(self, line):
+        s = line.strip()
+        if not s:
+            return None
+        # explicit prefixes
+        if s.startswith("Error:"):
+            return "ERROR"
+        if s.startswith("Warning:"):
+            return "WARNING"
+        if s.startswith("Info:"):
+            return "INFO"
+        # component tags used by services
+        if s.startswith("[poll]"):
+            return "POLL"
+        if s.startswith("[router]"):
+            return "ROUTER"
+        if s.startswith("[floating-ip]"):
+            return "FLOATING"
+        if s.startswith("[ports]"):
+            return "PORTS"
+        if s.startswith("[auth]"):
+            return "AUTH"
+        if s.startswith("[ui]"):
+            return "UI"
+        # success heuristics
+        lowered = s.lower()
+        if "success" in lowered or "successful" in lowered:
+            return "SUCCESS"
+        if "failed" in lowered or "exception" in lowered:
+            return "ERROR"
+        if "warning" in lowered:
+            return "WARNING"
+        if "info" in lowered:
+            return "INFO"
+        return None
 
     def on_refresh_click(self):
         if self._refresh_in_progress:
