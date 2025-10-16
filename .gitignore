@@ -124,3 +124,6 @@ dmypy.json
 # cache files
 token_cache.json
 openstack_data.json
+
+# OS files
+.DS_Store
