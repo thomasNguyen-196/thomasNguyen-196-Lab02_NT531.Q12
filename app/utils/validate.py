@@ -26,3 +26,23 @@ def is_instance_duplicate(name):
     data = _load_data()
     servers = data.get("servers", {}).get("servers", [])
     return any(vm.get("name") == name for vm in servers)
+
+
+def get_available_floating_ips():
+    """Return floating IP objects that are not currently associated with any port."""
+    data = _load_data()
+    floating_ips = data.get("floating_ips", {}).get("floatingips", [])
+    return [ip for ip in floating_ips if not ip.get("port_id")]
+
+
+def get_port_id_by_device(device_id):
+    """Return the first Neutron port ID that matches the supplied device (instance) ID."""
+    if not device_id:
+        return None
+
+    data = _load_data()
+    ports = data.get("ports", {}).get("ports", [])
+    for port in ports:
+        if port.get("device_id") == device_id:
+            return port.get("id")
+    return None
