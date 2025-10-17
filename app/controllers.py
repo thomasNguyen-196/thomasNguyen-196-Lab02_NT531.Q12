@@ -217,14 +217,10 @@ class AppBehaviorMixin:
                     return
 
                 user_script = self.script_textbox.get("1.0", "end").strip()
-                if user_script:
-                    user_data_b64 = base64.b64encode(user_script.encode('utf-8')).decode('utf-8')
-                else:
-                    user_data_b64 = None
 
                 token = get_openstack_token()
 
-                instance_id = create_instance(token, instance_name, image_id, flavor_id, network_id, user_data=user_data_b64)
+                instance_id = create_instance(token, instance_name, image_id, flavor_id, network_id, user_data=user_script)
 
                 if instance_id:
                     print(f"Instance creation successful. ID: {instance_id}")
