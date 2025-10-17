@@ -40,7 +40,7 @@ def create_instance(token, instance_name, image_id, flavor_id, network_id, user_
     }
 
     if user_data:
-        encoded_user_data = base64.b64encode(user_data.encode('utf-8')).decode('utf-8')
+        encoded_user_data = base64.b64encode(user_data.encode('utf-8')).decode('utf-8') # encode to base64
 
         payload["server"]["user_data"] = encoded_user_data
 
@@ -49,7 +49,7 @@ def create_instance(token, instance_name, image_id, flavor_id, network_id, user_
     # Get key pair name from environment variable if available
     key_name = os.getenv("KEY_PAIR_NAME_BASE64")
     if key_name:
-        payload["server"]["key_name"] = base64.b64decode(key_name).decode('utf-8')
+        payload["server"]["key_name"] = base64.b64decode(key_name).decode('utf-8') # decode from base64
         print(f"--> Added key_name '{payload['server']['key_name']}' to payload.")
 
     try:
