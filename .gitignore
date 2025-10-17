@@ -127,3 +127,6 @@ openstack_data.json
 
 # OS files
 .DS_Store
+
+# VS Code files
+.vscode/
